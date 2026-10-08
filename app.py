@@ -6,6 +6,7 @@ from streamlit_folium import st_folium
 import json
 import os
 import xml.etree.ElementTree as ET
+import urllib.parse
 
 # --- PAGE SETUP & MOBILE UX ---
 st.set_page_config(
@@ -122,20 +123,33 @@ with col_b:
 
 st.divider()
 
-# --- SECTION 2: MAP & GPX TERRAIN ENGINE ---
-st.subheader("🗺️ Route Map & GPX Trail Overlay")
+# --- SECTION 2: MAP, GOOGLE MAPS LAUNCHER & GPX ENGINE ---
+st.subheader("🗺️ Navigation, Satellite & GPX Trail Engine")
+
+# Quick Google Maps Launcher for Riders
+with st.expander("📍 Quick Launch Google Maps Navigation", expanded=True):
+    col_g1, col_g2 = st.columns([3, 1])
+    with col_g1:
+        gmaps_dest = st.text_input("Enter Destination / Location Name (e.g. Matheran, Kothaligad, Bhimashankar)", "Bhimashankar")
+    with col_g2:
+        st.write("##")
+        encoded_dest = urllib.parse.quote(gmaps_dest)
+        gmaps_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_dest}"
+        st.markdown(f'<a href="{gmaps_url}" target="_blank"><button style="width:100%; height:3em; background-color:#4285F4; color:white; font-weight:bold; border:none; border-radius:8px; cursor:pointer;">🗺️ Open in Google Maps</button></a>', unsafe_allow_html=True)
+
+st.write("")
 
 col_m1, col_m2 = st.columns([2, 1])
 
 with col_m1:
     map_mode = st.radio(
-        "Map View Type:",
+        "Satellite / Map Layer View:",
         ["Esri World Imagery (Real Satellite)", "OpenStreetMap (Standard)", "CartoDB Positron (Light)"],
         horizontal=True
     )
 
 with col_m2:
-    uploaded_gpx = st.file_uploader("Upload GPX Route File", type=["gpx"])
+    uploaded_gpx = st.file_uploader("Upload GPX Trail File (For Offroad/Treks)", type=["gpx"])
 
 # Parse GPX if uploaded
 route_coords = []
@@ -143,14 +157,12 @@ if uploaded_gpx is not None:
     try:
         tree = ET.parse(uploaded_gpx)
         root = tree.getroot()
-        # Namespace handling for GPX
         ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
         for trkpt in root.findall('.//gpx:trkpt', ns):
             lat = float(trkpt.attrib['lat'])
             lon = float(trkpt.attrib['lon'])
             route_coords.append((lat, lon))
         
-        # Fallback if no namespace prefix matched
         if not route_coords:
             for trkpt in root.findall('.//trkpt'):
                 lat = float(trkpt.attrib['lat'])
@@ -159,7 +171,6 @@ if uploaded_gpx is not None:
     except Exception as e:
         st.error("Error reading GPX file. Ensure it is a valid track file.")
 
-# Determine map center
 start_location = route_coords[0] if route_coords else [19.2183, 72.9781]
 m = folium.Map(location=start_location, zoom_start=12 if not route_coords else 13)
 
@@ -171,7 +182,6 @@ if map_mode == "Esri World Imagery (Real Satellite)":
 elif map_mode == "CartoDB Positron (Light)":
     folium.TileLayer('cartodbpositron').add_to(m)
 
-# Draw GPX route polyline if present
 if route_coords:
     folium.PolyLine(route_coords, color="cyan", weight=5, opacity=0.8, tooltip="Planned Trail Route").add_to(m)
     folium.Marker(route_coords[0], popup="Trail Start", icon=folium.Icon(color="green", icon="play")).add_to(m)
