@@ -3,28 +3,85 @@ import pandas as pd
 from datetime import datetime
 import folium
 from streamlit_folium import st_folium
+import json
+import os
 
-# Page Configuration
-st.set_page_config(page_title="Group Trip Hub", page_icon="🏍️", layout="wide")
+# --- PAGE SETUP & MOBILE UX ---
+st.set_page_config(
+    page_title="Group Trip Hub",
+    page_icon="🏍️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-st.title("🏍️ Group Trip & Trek Hub")
-st.caption("Live coordination board for riders & trekkers")
+# Custom Mobile CSS Styling for clear visibility on mounts / handheld devices
+st.markdown("""
+    <style>
+    .stButton>button {
+        width: 100%;
+        height: 3em;
+        font-weight: bold;
+        border-radius: 8px;
+    }
+    .main .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-# Persistent Session States
-if "alerts" not in st.session_state:
-    st.session_state.alerts = []
+# --- SECURITY & PASSCODE ACCESS ---
+TRIP_PIN = "2026"  # Default trip passcode for your group
 
-if "expenses" not in st.session_state:
-    st.session_state.expenses = []
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-if "rider_instructions" not in st.session_state:
-    st.session_state.rider_instructions = []
+if not st.session_state.authenticated:
+    st.title("🔒 Group Trip Hub - Security Access")
+    st.caption("Enter group passcode to proceed")
+    
+    user_pin = st.text_input("Trip Passcode", type="password", max_chars=4)
+    if st.button("Unlock Trip Dashboard"):
+        if user_pin == TRIP_PIN:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect passcode. Ask your trip admin.")
+    st.stop()
 
-if "backsitter_instructions" not in st.session_state:
-    st.session_state.backsitter_instructions = []
+# --- PERSISTENT DATA ENGINE (Cloud File Backup Engine) ---
+DATA_FILE = "trip_data.json"
 
-# --- SECTION 1: MANUAL INSTRUCTIONS (RIDERS & PILLIONS) ---
-st.subheader("📋 Rider & Pillion Briefing")
+def load_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"alerts": [], "expenses": [], "rider_inst": [], "pillion_inst": []}
+
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+# Load state
+cloud_data = load_data()
+
+# --- APP HEADER ---
+col_head, col_lock = st.columns([4, 1])
+with col_head:
+    st.title("🏍️ Group Trip & Trek Hub")
+    st.caption("Production Coordination Board | Live Group Sync")
+with col_lock:
+    if st.button("🔒 Lock"):
+        st.session_state.authenticated = False
+        st.rerun()
+
+st.divider()
+
+# --- SECTION 1: INSTRUCTIONS (RIDERS & PILLIONS) ---
+st.subheader("📋 Briefing & Assignments")
 
 col_r, col_b = st.columns(2)
 
@@ -33,107 +90,109 @@ with col_r:
     with st.form("rider_inst_form", clear_on_submit=True):
         target_rider = st.text_input("Rider Name / Bike No.")
         instruction_text = st.text_area("Instruction / Assignment")
-        add_rider_inst = st.form_submit_button("Assign Instruction")
-
-        if add_rider_inst and target_rider and instruction_text:
-            st.session_state.rider_instructions.append({
-                "Rider": target_rider,
-                "Instruction": instruction_text,
-                "Time": datetime.now().strftime('%H:%M')
+        if st.form_submit_button("Assign Instruction") and target_rider and instruction_text:
+            cloud_data["rider_inst"].insert(0, {
+                "time": datetime.now().strftime('%H:%M'),
+                "assignee": target_rider,
+                "task": instruction_text
             })
-            st.success("Instruction added for rider!")
+            save_data(cloud_data)
+            st.success("Instruction updated!")
+            st.rerun()
 
-    if st.session_state.rider_instructions:
-        for idx, item in enumerate(st.session_state.rider_instructions):
-            st.warning(f"**[{item['Time']}] {item['Rider']}**: {item['Instruction']}")
+    for item in cloud_data.get("rider_inst", [])[:5]:
+        st.warning(f"**[{item['time']}] {item['assignee']}**: {item['task']}")
 
 with col_b:
     st.markdown("### 🎒 For Pillions (Backsitters)")
-    with st.form("backsitter_inst_form", clear_on_submit=True):
-        target_backsitter = st.text_input("Pillion Name / Assigned Rider")
-        backsitter_text = st.text_area("Task (e.g., Navigation, Photo duty, Expense log)")
-        add_back_inst = st.form_submit_button("Assign Task")
-
-        if add_back_inst and target_backsitter and backsitter_text:
-            st.session_state.backsitter_instructions.append({
-                "Pillion": target_backsitter,
-                "Task": backsitter_text,
-                "Time": datetime.now().strftime('%H:%M')
+    with st.form("pillion_inst_form", clear_on_submit=True):
+        target_pillion = st.text_input("Pillion Name / Assigned Rider")
+        pillion_text = st.text_area("Task (Navigation, Photo duty, Expense log)")
+        if st.form_submit_button("Assign Task") and target_pillion and pillion_text:
+            cloud_data["pillion_inst"].insert(0, {
+                "time": datetime.now().strftime('%H:%M'),
+                "assignee": target_pillion,
+                "task": pillion_text
             })
-            st.success("Task assigned to pillion!")
+            save_data(cloud_data)
+            st.success("Task assigned!")
+            st.rerun()
 
-    if st.session_state.backsitter_instructions:
-        for idx, item in enumerate(st.session_state.backsitter_instructions):
-            st.info(f"**[{item['Time']}] {item['Pillion']}**: {item['Task']}")
+    for item in cloud_data.get("pillion_inst", [])[:5]:
+        st.info(f"**[{item['time']}] {item['assignee']}**: {item['task']}")
 
 st.divider()
 
-# --- SECTION 2: INTERACTIVE SATELLITE & ROAD MAP ---
+# --- SECTION 2: MAP & TERRAIN ENGINE ---
 st.subheader("🗺️ Live Route & Terrain Map")
 
 map_mode = st.radio(
-    "Select Map Layer View:",
-    ["Esri World Imagery (Real Satellite)", "OpenStreetMap (Standard Road Map)", "CartoDB Positron (Light View)"],
+    "Map View Type:",
+    ["Esri World Imagery (Real Satellite)", "OpenStreetMap (Standard)", "CartoDB Positron (Light)"],
     horizontal=True
 )
 
-# Base coordinates
 m = folium.Map(location=[19.2183, 72.9781], zoom_start=11)
 
 if map_mode == "Esri World Imagery (Real Satellite)":
     folium.TileLayer(
         tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri',
-        name='Esri Satellite',
-        overlay=False,
-        control=True
+        attr='Esri', name='Esri Satellite', overlay=False, control=True
     ).add_to(m)
-elif map_mode == "CartoDB Positron (Light View)":
+elif map_mode == "CartoDB Positron (Light)":
     folium.TileLayer('cartodbpositron').add_to(m)
 
-# Add sample regroup checkpoint marker
-folium.Marker(
-    [19.2183, 72.9781],
-    popup="Starting Point / Regroup Area",
-    tooltip="Regroup Point",
-    icon=folium.Icon(color="red", icon="info-sign")
-).add_to(m)
-
-st_folium(m, width="100%", height=450)
+folium.Marker([19.2183, 72.9781], popup="Regroup Checkpoint", tooltip="Start / Regroup Area", icon=folium.Icon(color="red", icon="flag")).add_to(m)
+st_folium(m, width="100%", height=420)
 
 st.divider()
 
-# --- SECTION 3: QUICK ALERTS ---
-st.subheader("🚨 Live Status & Alerts")
-a_col1, a_col2, a_col3 = st.columns(3)
-with a_col1:
-    if st.button("⛽ Fuel / Chai Stop", use_container_width=True):
-        st.session_state.alerts.insert(0, f"[{datetime.now().strftime('%H:%M')}] Rider stopped for Fuel/Tea")
-with a_col2:
-    if st.button("🔧 Puncture / Mechanical", use_container_width=True):
-        st.session_state.alerts.insert(0, f"[{datetime.now().strftime('%H:%M')}] ⚠️ Breakdown/Puncture reported!")
-with a_col3:
-    if st.button("📍 Regroup Point Reached", use_container_width=True):
-        st.session_state.alerts.insert(0, f"[{datetime.now().strftime('%H:%M')}] 🟢 Reached regroup point")
+# --- SECTION 3: LIVE STATUS & EMERGENCY ALERTS ---
+st.subheader("🚨 Live Alerts & Status Feed")
 
-if st.session_state.alerts:
-    for alert in st.session_state.alerts[:5]:
-        st.write(alert)
+col_a1, col_a2, col_a3 = st.columns(3)
+
+def log_alert(msg):
+    cloud_data["alerts"].insert(0, f"[{datetime.now().strftime('%H:%M')}] {msg}")
+    save_data(cloud_data)
+    st.rerun()
+
+with col_a1:
+    if st.button("⛽ Fuel / Chai Stop"):
+        log_alert("Rider stopped for Fuel/Tea")
+with col_a2:
+    if st.button("🔧 Mechanical / Breakdown"):
+        log_alert("⚠️ Breakdown or Puncture reported!")
+with col_a3:
+    if st.button("📍 Regroup Point Reached"):
+        log_alert("🟢 Reached regroup checkpoint")
+
+if cloud_data.get("alerts"):
+    st.markdown("#### Activity Feed")
+    for alert in cloud_data["alerts"][:5]:
+        st.info(alert)
 
 st.divider()
 
-# --- SECTION 4: EXPENSE LOG ---
-st.subheader("💰 Quick Expense Log")
+# --- SECTION 4: EXPENSE TRACKER & SPLITTER ---
+st.subheader("💰 Group Expense Splitter")
+
 with st.form("expense_form", clear_on_submit=True):
-    spender = st.text_input("Who paid?")
-    amount = st.number_input("Amount (₹)", min_value=0.0, step=10.0)
-    for_what = st.text_input("For what?")
-    submitted = st.form_submit_button("Add Expense")
+    col_e1, col_e2 = st.columns(2)
+    with col_e1:
+        spender = st.text_input("Who Paid?")
+        amount = st.number_input("Amount (₹)", min_value=0.0, step=10.0)
+    with col_e2:
+        for_what = st.text_input("For What? (Fuel, Toll, Food, Stay)")
+        add_exp = st.form_submit_button("Add Expense")
 
-    if submitted and spender and amount > 0:
-        st.session_state.expenses.append({"Paid By": spender, "Amount (₹)": amount, "Item": for_what})
+    if add_exp and spender and amount > 0:
+        cloud_data["expenses"].append({"Paid By": spender, "Amount (₹)": amount, "Item": for_what})
+        save_data(cloud_data)
+        st.success(f"Logged ₹{amount:.2f} by {spender}")
+        st.rerun()
 
-if st.session_state.expenses:
-    df_exp = pd.DataFrame(st.session_state.expenses)
+if cloud_data.get("expenses"):
+    df_exp = pd.DataFrame(cloud_data["expenses"])
     st.dataframe(df_exp, use_container_width=True)
-    st.metric(label="Total Trip Expense", value=f"₹{df_exp['Amount (₹)'].sum():,.2f}")
+    st.metric(label="Total Group Expense", value=f"₹{df_exp['Amount (₹)'].sum():,.2f}")
