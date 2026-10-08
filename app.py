@@ -5,6 +5,7 @@ import folium
 from streamlit_folium import st_folium
 import json
 import os
+import xml.etree.ElementTree as ET
 
 # --- PAGE SETUP & MOBILE UX ---
 st.set_page_config(
@@ -14,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom Mobile CSS Styling for clear visibility on mounts / handheld devices
 st.markdown("""
     <style>
     .stButton>button {
@@ -31,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- SECURITY & PASSCODE ACCESS ---
-TRIP_PIN = "2026"  # Default trip passcode for your group
+TRIP_PIN = "2026"
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -49,7 +49,7 @@ if not st.session_state.authenticated:
             st.error("Incorrect passcode. Ask your trip admin.")
     st.stop()
 
-# --- PERSISTENT DATA ENGINE (Cloud File Backup Engine) ---
+# --- PERSISTENT DATA ENGINE ---
 DATA_FILE = "trip_data.json"
 
 def load_data():
@@ -65,7 +65,6 @@ def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# Load state
 cloud_data = load_data()
 
 # --- APP HEADER ---
@@ -123,16 +122,46 @@ with col_b:
 
 st.divider()
 
-# --- SECTION 2: MAP & TERRAIN ENGINE ---
-st.subheader("🗺️ Live Route & Terrain Map")
+# --- SECTION 2: MAP & GPX TERRAIN ENGINE ---
+st.subheader("🗺️ Route Map & GPX Trail Overlay")
 
-map_mode = st.radio(
-    "Map View Type:",
-    ["Esri World Imagery (Real Satellite)", "OpenStreetMap (Standard)", "CartoDB Positron (Light)"],
-    horizontal=True
-)
+col_m1, col_m2 = st.columns([2, 1])
 
-m = folium.Map(location=[19.2183, 72.9781], zoom_start=11)
+with col_m1:
+    map_mode = st.radio(
+        "Map View Type:",
+        ["Esri World Imagery (Real Satellite)", "OpenStreetMap (Standard)", "CartoDB Positron (Light)"],
+        horizontal=True
+    )
+
+with col_m2:
+    uploaded_gpx = st.file_uploader("Upload GPX Route File", type=["gpx"])
+
+# Parse GPX if uploaded
+route_coords = []
+if uploaded_gpx is not None:
+    try:
+        tree = ET.parse(uploaded_gpx)
+        root = tree.getroot()
+        # Namespace handling for GPX
+        ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
+        for trkpt in root.findall('.//gpx:trkpt', ns):
+            lat = float(trkpt.attrib['lat'])
+            lon = float(trkpt.attrib['lon'])
+            route_coords.append((lat, lon))
+        
+        # Fallback if no namespace prefix matched
+        if not route_coords:
+            for trkpt in root.findall('.//trkpt'):
+                lat = float(trkpt.attrib['lat'])
+                lon = float(trkpt.attrib['lon'])
+                route_coords.append((lat, lon))
+    except Exception as e:
+        st.error("Error reading GPX file. Ensure it is a valid track file.")
+
+# Determine map center
+start_location = route_coords[0] if route_coords else [19.2183, 72.9781]
+m = folium.Map(location=start_location, zoom_start=12 if not route_coords else 13)
 
 if map_mode == "Esri World Imagery (Real Satellite)":
     folium.TileLayer(
@@ -142,8 +171,15 @@ if map_mode == "Esri World Imagery (Real Satellite)":
 elif map_mode == "CartoDB Positron (Light)":
     folium.TileLayer('cartodbpositron').add_to(m)
 
-folium.Marker([19.2183, 72.9781], popup="Regroup Checkpoint", tooltip="Start / Regroup Area", icon=folium.Icon(color="red", icon="flag")).add_to(m)
-st_folium(m, width="100%", height=420)
+# Draw GPX route polyline if present
+if route_coords:
+    folium.PolyLine(route_coords, color="cyan", weight=5, opacity=0.8, tooltip="Planned Trail Route").add_to(m)
+    folium.Marker(route_coords[0], popup="Trail Start", icon=folium.Icon(color="green", icon="play")).add_to(m)
+    folium.Marker(route_coords[-1], popup="Trail End / Peak", icon=folium.Icon(color="red", icon="flag")).add_to(m)
+else:
+    folium.Marker([19.2183, 72.9781], popup="Regroup Checkpoint", tooltip="Start / Regroup Area", icon=folium.Icon(color="red", icon="flag")).add_to(m)
+
+st_folium(m, width="100%", height=450)
 
 st.divider()
 
