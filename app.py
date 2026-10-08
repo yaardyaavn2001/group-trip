@@ -126,7 +126,6 @@ st.divider()
 # --- SECTION 2: MAP, GOOGLE MAPS LAUNCHER & GPX ENGINE ---
 st.subheader("🗺️ Navigation, Satellite & GPX Trail Engine")
 
-# Quick Google Maps Launcher for Riders
 with st.expander("📍 Quick Launch Google Maps Navigation", expanded=True):
     col_g1, col_g2 = st.columns([3, 1])
     with col_g1:
@@ -194,7 +193,7 @@ st_folium(m, width="100%", height=450)
 st.divider()
 
 # --- SECTION 3: LIVE STATUS & EMERGENCY ALERTS ---
-st.subheader("🚨 Live Alerts & Status Feed")
+st.subheader("🚨 Live One-Tap Alerts")
 
 col_a1, col_a2, col_a3 = st.columns(3)
 
@@ -207,15 +206,25 @@ with col_a1:
     if st.button("⛽ Fuel / Chai Stop"):
         log_alert("Rider stopped for Fuel/Tea")
 with col_a2:
-    if st.button("🔧 Mechanical / Breakdown"):
+    if st.button("🔧 Breakdown / Puncture"):
         log_alert("⚠️ Breakdown or Puncture reported!")
 with col_a3:
     if st.button("📍 Regroup Point Reached"):
         log_alert("🟢 Reached regroup checkpoint")
 
+# Custom Alert Input for Police, Traffic, etc.
+with st.form("custom_alert_form", clear_on_submit=True):
+    col_ca1, col_ca2 = st.columns([3, 1])
+    with col_ca1:
+        custom_msg = st.text_input("Custom Status (e.g. Police checking ahead, Heavy traffic, Regrouping at Toll)")
+    with col_ca2:
+        st.write("##")
+        if st.form_submit_button("Post Alert") and custom_msg:
+            log_alert(f"📢 {custom_msg}")
+
 if cloud_data.get("alerts"):
-    st.markdown("#### Activity Feed")
-    for alert in cloud_data["alerts"][:5]:
+    st.markdown("#### Live Activity Feed")
+    for alert in cloud_data["alerts"][:6]:
         st.info(alert)
 
 st.divider()
