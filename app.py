@@ -8,6 +8,7 @@ import os
 import xml.etree.ElementTree as ET
 import urllib.parse
 import math
+import streamlit.components.v1 as components
 
 # --- PAGE SETUP & MOBILE UX ---
 st.set_page_config(
@@ -66,12 +67,7 @@ def load_data():
         "expenses": [],
         "rider_inst": [],
         "pillion_inst": [],
-        "leaderboard": [
-            {"rider": "Aryan (Lead)", "bike": "Bike A", "dist_rem": 10.2},
-            {"rider": "Pillion 1", "bike": "Bike A", "dist_rem": 10.2},
-            {"rider": "Rider 2 (Mid)", "bike": "Bike B", "dist_rem": 11.84},
-            {"rider": "Rider 3 (Sweep)", "bike": "Bike C", "dist_rem": 13.76}
-        ]
+        "leaderboard": {}
     }
 
 def save_data(data):
@@ -80,11 +76,20 @@ def save_data(data):
 
 cloud_data = load_data()
 
+# --- HAVERSINE DISTANCE CALCULATION (KM) ---
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0 # Earth radius in kilometers
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
 # --- APP HEADER ---
 col_head, col_lock = st.columns([4, 1])
 with col_head:
     st.title("🏍️ Group Trip & Ride Manager")
-    st.caption("Live Tracking, Leaderboard & Coordination Hub")
+    st.caption("Live Automatic Tracking, Leaderboard & Coordination Hub")
 with col_lock:
     if st.button("🔒 Lock"):
         st.session_state.authenticated = False
@@ -92,9 +97,127 @@ with col_lock:
 
 st.divider()
 
-# --- SECTION 1: INSTRUCTIONS (RIDERS & PILLIONS) ---
-st.subheader("📋 Travel Instructions & Duties")
+# --- SECTION 1: LIVE GPS TRACKING CONTROLLER ---
+st.subheader("📡 Live GPS Location Sync")
 
+col_user1, col_user2 = st.columns([2, 2])
+with col_user1:
+    current_rider = st.text_input("Enter Your Rider / Bike Name", value="Aryan (Lead)")
+with col_user2:
+    target_dest_coords = st.text_input("Destination Coordinates (Lat, Lon)", value="19.0728, 73.5358") # Default Bhimashankar
+
+# Parse destination coordinates
+try:
+    dest_lat, dest_lon = [float(x.strip()) for x in target_dest_coords.split(",")]
+except Exception:
+    dest_lat, dest_lon = 19.0728, 73.5358
+
+# HTML / JS auto-location streamer
+gps_html = f"""
+<div style="background:#1e1e1e; color:white; padding:10px; border-radius:8px; font-family:sans-serif; text-align:center;">
+    <p id="status" style="margin:0; font-size:14px; font-weight:bold;">📡 Initializing Live GPS Tracking...</p>
+</div>
+<script>
+    function updatePosition(position) {{
+        var lat = position.coords.latitude;
+        var lon = position.coords.longitude;
+        document.getElementById("status").innerHTML = "🟢 Live Location Transmitting: " + lat.toFixed(4) + ", " + lon.toFixed(4);
+    }}
+    function handleError(error) {{
+        document.getElementById("status").innerHTML = "🔴 GPS Error: Please allow Location Permission on your phone browser.";
+    }}
+    if (navigator.geolocation) {{
+        navigator.geolocation.watchPosition(updatePosition, handleError, {{
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 5000
+        }});
+    }} else {{
+        document.getElementById("status").innerHTML = "❌ Geolocation is not supported by this browser.";
+    }}
+</script>
+"""
+components.html(gps_html, height=60)
+
+# Optional Manual Coordinate Override for Testing/Fallback
+with st.expander("⚙️ Manual GPS Coordinate Sync (Fallback)"):
+    with st.form("manual_gps_form"):
+        c_lat = st.number_input("Your Current Latitude", value=19.2183, format="%.4f")
+        c_lon = st.number_input("Your Current Longitude", value=72.9781, format="%.4f")
+        if st.form_submit_button("Broadcast Location"):
+            dist_to_go = calculate_distance(c_lat, c_lon, dest_lat, dest_lon)
+            cloud_data["leaderboard"][current_rider] = {
+                "lat": c_lat,
+                "lon": c_lon,
+                "dist_rem": round(dist_to_go, 2),
+                "last_seen": datetime.now().strftime('%H:%M:%S')
+            }
+            save_data(cloud_data)
+            st.success("Location broadcasted!")
+            st.rerun()
+
+st.divider()
+
+# --- SECTION 2: LIVE SATELLITE MAP & AUTO LEADERBOARD ---
+st.subheader("🏆 Live Satellite Map & Automatic Leaderboard")
+
+col_map, col_lb = st.columns([3, 2])
+
+with col_map:
+    st.markdown("#### 🗺️ Live Location Map")
+    map_mode = st.radio(
+        "Layer:",
+        ["Esri World Imagery (Real Satellite)", "OpenStreetMap (Standard)", "CartoDB Positron (Light)"],
+        horizontal=True
+    )
+
+    m = folium.Map(location=[dest_lat, dest_lon], zoom_start=10)
+
+    if map_mode == "Esri World Imagery (Real Satellite)":
+        folium.TileLayer(
+            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attr='Esri', name='Esri Satellite', overlay=False, control=True
+        ).add_to(m)
+
+    # Plot destination marker
+    folium.Marker([dest_lat, dest_lon], popup="Destination", icon=folium.Icon(color="green", icon="flag")).add_to(m)
+
+    # Plot live riders from leaderboard storage
+    for rider_name, info in cloud_data.get("leaderboard", {}).items():
+        folium.Marker(
+            [info["lat"], info["lon"]],
+            popup=f"{rider_name} ({info['dist_rem']} km left)",
+            icon=folium.Icon(color="red", icon="motorcycle", prefix="fa")
+        ).add_to(m)
+
+    st_folium(m, width="100%", height=400)
+
+with col_lb:
+    st.markdown("#### 🏆 Auto-Sorted Ride Leaderboard")
+    
+    # Sort leaderboard by remaining distance
+    lb_dict = cloud_data.get("leaderboard", {})
+    sorted_riders = sorted(lb_dict.items(), key=lambda x: x[1].get("dist_rem", 999))
+
+    if not sorted_riders:
+        st.info("No live rider data broadcasting yet. Enter rider name and allow location access.")
+    else:
+        total_reference_dist = 60.0 # reference km for progress bar
+        for idx, (rider, info) in enumerate(sorted_riders, start=1):
+            dist = info.get("dist_rem", 0.0)
+            last_seen = info.get("last_seen", "--:--")
+            
+            pct = max(0.0, min(1.0, (total_reference_dist - dist) / total_reference_dist))
+            
+            st.markdown(f"**#{idx} {rider}**")
+            st.caption(f"Distance Remaining: **{dist:.2f} km** | Sync: {last_seen}")
+            st.progress(pct)
+            st.write("")
+
+st.divider()
+
+# --- SECTION 3: INSTRUCTIONS & DUTIES ---
+st.subheader("📋 Travel Instructions & Duties")
 col_r, col_b = st.columns(2)
 
 with col_r:
@@ -135,120 +258,8 @@ with col_b:
 
 st.divider()
 
-# --- SECTION 2: LIVE SATELLITE MAP & RIDE LEADERBOARD ---
-st.subheader("🏆 Live Satellite Map & Ride Leaderboard")
-
-# Google Maps launcher bar
-with st.expander("📍 Launch Google Maps Navigation", expanded=False):
-    col_g1, col_g2 = st.columns([3, 1])
-    with col_g1:
-        gmaps_dest = st.text_input("Destination Name", "Bhimashankar")
-    with col_g2:
-        st.write("##")
-        encoded_dest = urllib.parse.quote(gmaps_dest)
-        gmaps_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_dest}"
-        st.markdown(f'<a href="{gmaps_url}" target="_blank"><button style="width:100%; height:3em; background-color:#4285F4; color:white; font-weight:bold; border:none; border-radius:8px; cursor:pointer;">🗺️ Open Google Maps</button></a>', unsafe_allow_html=True)
-
-col_map, col_lb = st.columns([3, 2])
-
-with col_map:
-    st.markdown("#### 🗺️ Live Location Map")
-    map_mode = st.radio(
-        "Layer:",
-        ["Esri World Imagery (Real Satellite)", "OpenStreetMap (Standard)", "CartoDB Positron (Light)"],
-        horizontal=True
-    )
-    
-    uploaded_gpx = st.file_uploader("Upload GPX Route File", type=["gpx"])
-    route_coords = []
-    if uploaded_gpx is not None:
-        try:
-            tree = ET.parse(uploaded_gpx)
-            root = tree.getroot()
-            ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
-            for trkpt in root.findall('.//gpx:trkpt', ns):
-                lat = float(trkpt.attrib['lat'])
-                lon = float(trkpt.attrib['lon'])
-                route_coords.append((lat, lon))
-            if not route_coords:
-                for trkpt in root.findall('.//trkpt'):
-                    lat = float(trkpt.attrib['lat'])
-                    lon = float(trkpt.attrib['lon'])
-                    route_coords.append((lat, lon))
-        except Exception:
-            st.error("Error parsing GPX file.")
-
-    start_location = route_coords[0] if route_coords else [19.2183, 72.9781]
-    m = folium.Map(location=start_location, zoom_start=11)
-
-    if map_mode == "Esri World Imagery (Real Satellite)":
-        folium.TileLayer(
-            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            attr='Esri', name='Esri Satellite', overlay=False, control=True
-        ).add_to(m)
-    elif map_mode == "CartoDB Positron (Light)":
-        folium.TileLayer('cartodbpositron').add_to(m)
-
-    if route_coords:
-        folium.PolyLine(route_coords, color="cyan", weight=5, opacity=0.8).add_to(m)
-    else:
-        # Markers representing group bikes on map
-        folium.Marker([19.2183, 72.9781], popup="Lead Rider (Bike A)", icon=folium.Icon(color="red", icon="motorcycle", prefix="fa")).add_to(m)
-        folium.Marker([19.2000, 72.9600], popup="Mid Rider (Bike B)", icon=folium.Icon(color="blue", icon="motorcycle", prefix="fa")).add_to(m)
-        folium.Marker([19.1800, 72.9400], popup="Sweep Rider (Bike C)", icon=folium.Icon(color="orange", icon="motorcycle", prefix="fa")).add_to(m)
-
-    st_folium(m, width="100%", height=400)
-
-with col_lb:
-    st.markdown("#### 🏆 Ride Leaderboard")
-    
-    # Sort leaderboard by remaining distance (lowest distance to goal = #1)
-    lb_data = cloud_data.get("leaderboard", [])
-    lb_sorted = sorted(lb_data, key=lambda x: x.get("dist_rem", 999))
-    
-    total_trip_dist = 50.0  # reference total km for progress bar rendering
-    
-    for idx, item in enumerate(lb_sorted, start=1):
-        rider = item.get("rider", f"Rider {idx}")
-        bike = item.get("bike", "")
-        dist = item.get("dist_rem", 0.0)
-        
-        # Calculate percentage completed
-        pct = max(0.0, min(1.0, (total_trip_dist - dist) / total_trip_dist))
-        
-        st.markdown(f"**#{idx} {rider} ({bike})**")
-        st.caption(f"Distance to Goal: **{dist:.2f} km**")
-        st.progress(pct)
-        st.write("")
-
-    # Update Position Form
-    with st.expander("⏱️ Update Rider Distance / Position"):
-        with st.form("update_lb_form", clear_on_submit=True):
-            r_name = st.text_input("Rider/Pillion Name", "Aryan")
-            r_bike = st.text_input("Bike Group", "Bike A")
-            r_dist = st.number_input("Distance to Goal Remaining (km)", min_value=0.0, max_value=500.0, value=10.0, step=0.5)
-            
-            if st.form_submit_button("Update Leaderboard"):
-                # Update existing or append new
-                found = False
-                for entry in cloud_data["leaderboard"]:
-                    if entry["rider"].lower() == r_name.lower():
-                        entry["dist_rem"] = r_dist
-                        entry["bike"] = r_bike
-                        found = True
-                        break
-                if not found:
-                    cloud_data["leaderboard"].append({"rider": r_name, "bike": r_bike, "dist_rem": r_dist})
-                
-                save_data(cloud_data)
-                st.success(f"Updated position for {r_name}!")
-                st.rerun()
-
-st.divider()
-
-# --- SECTION 3: LIVE STATUS & EMERGENCY ALERTS ---
+# --- SECTION 4: LIVE ONE-TAP ALERTS ---
 st.subheader("🚨 Live One-Tap Rider Alerts")
-
 col_a1, col_a2, col_a3, col_a4 = st.columns(4)
 
 def log_alert(msg):
@@ -269,15 +280,6 @@ with col_a4:
     if st.button("🔧 Breakdown"):
         log_alert("⚠️ Breakdown or Puncture reported!")
 
-with st.form("custom_alert_form", clear_on_submit=True):
-    col_ca1, col_ca2 = st.columns([3, 1])
-    with col_ca1:
-        custom_msg = st.text_input("Custom Status Alert")
-    with col_ca2:
-        st.write("##")
-        if st.form_submit_button("Post Alert") and custom_msg:
-            log_alert(f"📢 {custom_msg}")
-
 if cloud_data.get("alerts"):
     st.markdown("#### Live Activity Feed")
     for alert in cloud_data["alerts"][:5]:
@@ -285,9 +287,8 @@ if cloud_data.get("alerts"):
 
 st.divider()
 
-# --- SECTION 4: EXPENSE & FUEL SPLITTER ---
+# --- SECTION 5: EXPENSE SPLITTER ---
 st.subheader("💰 Expense & Fuel Splitter")
-
 with st.form("expense_form", clear_on_submit=True):
     col_e1, col_e2 = st.columns(2)
     with col_e1:
